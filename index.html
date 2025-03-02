@@ -1,46 +1,427 @@
-<html>
+<!DOCTYPE html>
+<html lang="tr">
 <head>
-<title></title>
-    <style>
-        #myCanvas
-        {
-            height: 50%;
-            width: 50%;
-            border: 1px solid white;
-        }
-        *
-        {
-            margin: 0;
-            padding: 0;
-        }
-        /* to remove the top and left whitespace */
-        #main
-        {
-            text-align: center;
-        }
-        html, body
-        {
-            width: 100%;
-            height: 100%;
-            background-color:Black;
-        }
-        /* just to be sure these are full screen*/
-        
-        canvas
-        {
-            display: block;
-        }
-    </style>
-    <script type="text/javascript" src="http://ajax.googleapis.com/ajax/libs/jquery/1.4.2/jquery.min.js"></script>
-    <script type="text/javascript" src="pm.js"></script>
+  <meta charset="UTF-8" />
+  <title>Pong NPC - Geliştirilmiş</title>
+  <style>
+    html, body {
+      margin: 0; 
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background-color: black;
+      overflow: hidden;
+      font-family: sans-serif;
+    }
+    #main {
+      text-align: center;
+      position: relative;
+    }
+    #myCanvas {
+      border: 1px solid white;
+      background-color: #000;
+      display: block;
+      margin: 0 auto;
+    }
+    #infoBar {
+      color: white;
+      text-align: center;
+      margin-top: 10px;
+      font-size: 24px;
+      user-select: none;
+    }
+    #startOverlay, #pauseOverlay {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      font-size: 32px;
+      z-index: 999; /* canvas'ın üstünde görünmesi için */
+    }
+    #pauseOverlay { 
+      display: none; 
+    }
+    button {
+      background: #333;
+      color: #fff;
+      border: 1px solid #fff;
+      padding: 10px 20px;
+      font-size: 20px;
+      cursor: pointer;
+      margin-top: 20px;
+    }
+    button:hover {
+      background: #555;
+    }
+  </style>
 </head>
 <body>
-    <header id="head"> PONG MONG </header>
-    <section id="main">
-        <center>
-    <canvas id="myCanvas">
-    </canvas>
-        </center>
-    </section>
+  <div id="infoBar">PONG - NPC (Geliştirilmiş Versiyon)</div>
+  <section id="main">
+    <!-- Başlangıç & Pause Overlay -->
+    <div id="startOverlay">
+      <div>PONG OYUNUNA HOŞ GELDİN!</div>
+      <button id="startBtn">Oyunu Başlat</button>
+    </div>
+    <div id="pauseOverlay">
+      <div>Oyun Duraklatıldı</div>
+      <button id="resumeBtn">Devam Et</button>
+    </div>
+
+    <canvas id="myCanvas"></canvas>
+  </section>
+
+  <script>
+    window.addEventListener("DOMContentLoaded", () => {
+      const canvas = document.getElementById("myCanvas");
+      const context = canvas.getContext("2d");
+
+      const startOverlay = document.getElementById("startOverlay");
+      const pauseOverlay = document.getElementById("pauseOverlay");
+      const startBtn = document.getElementById("startBtn");
+      const resumeBtn = document.getElementById("resumeBtn");
+
+      // Ekran boyutuna göre canvas'ı ayarla
+      function resizeCanvas() {
+        canvas.width = window.innerWidth * 0.8;   // %80
+        canvas.height = window.innerHeight * 0.8; // %80
+      }
+      resizeCanvas();
+      window.addEventListener("resize", resizeCanvas);
+
+      let canvasWidth = canvas.width;
+      let canvasHeight = canvas.height;
+
+      // Oyun durumları
+      let gameState = "START"; // START, PLAYING, PAUSE
+
+      // Basit ses eklemek için (istenirse gerçek dosya yoluyla veya DataURL ile kullanılabilir):
+      // let collisionSound = new Audio("assets/collision.wav");
+      // let wallSound = new Audio("assets/wall.wav");
+      // Örnek olarak beep oluşturma (Web Audio API ile basit bip):
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+      function playBeep(frequency = 440, duration = 0.05, volume = 0.3) {
+        // Bir OscillatorNode oluştur
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+
+        oscillator.frequency.value = frequency;
+        gainNode.gain.value = volume;
+
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+
+        oscillator.start();
+        setTimeout(() => {
+          oscillator.stop();
+        }, duration * 1000);
+      }
+
+      // Top (Ball) sınıfı
+      class Ball {
+        constructor(x, y, radius, vX, vY) {
+          this.x = x;
+          this.y = y;
+          this.radius = radius;
+          this.vX = vX;
+          this.vY = vY;
+          this.color = "white";
+          this.colorTimer = 0; // çarpışma sonrası rengi geçici değiştirmek için
+        }
+
+        update() {
+          this.x += this.vX;
+          this.y += this.vY;
+
+          // Renk geçişini yönet
+          if (this.colorTimer > 0) {
+            this.colorTimer--;
+            if (this.colorTimer <= 0) {
+              this.color = "white";
+            }
+          }
+        }
+
+        draw(ctx) {
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2, false);
+          ctx.fillStyle = this.color;
+          ctx.fill();
+          ctx.closePath();
+        }
+
+        // Topun rengini kısa süreliğine değiştir
+        flashColor(newColor, duration = 10) {
+          this.color = newColor;
+          this.colorTimer = duration; 
+        }
+      }
+
+      // Paddle (raket) sınıfı
+      class Paddle {
+        constructor(x, y, width, height, isNPC = false) {
+          this.x = x;
+          this.y = y;
+          this.width = width;
+          this.height = height;
+          this.score = 0;
+          this.isNPC = isNPC;
+          // Hareket için hız ve ivme değerleri
+          this.vy = 0;
+          this.acceleration = 1.0;
+          this.maxSpeed = 15;
+          this.friction = 0.85;
+        }
+
+        // Oyuncu paddle'ı için: ivmelenmeli hareket
+        updateMovement(upPressed, downPressed) {
+          if (upPressed) {
+            this.vy = Math.max(this.vy - this.acceleration, -this.maxSpeed);
+          } else if (downPressed) {
+            this.vy = Math.min(this.vy + this.acceleration, this.maxSpeed);
+          } else {
+            // Tuş bırakıldıysa yavaşlama uygula
+            this.vy *= this.friction;
+            if (Math.abs(this.vy) < 0.5) this.vy = 0;
+          }
+          this.y += this.vy;
+
+          // Kenar kontrolü
+          if (this.y < 0) {
+            this.y = 0;
+            this.vy = 0;
+          }
+          if (this.y > canvasHeight - this.height) {
+            this.y = canvasHeight - this.height;
+            this.vy = 0;
+          }
+        }
+
+        // NPC için basit top takip (ivmeli yaklaşım)
+        updateAI(ball) {
+          const paddleCenter = this.y + this.height / 2;
+          const diff = ball.y - paddleCenter;
+          if (Math.abs(diff) > 10) {
+            let direction = diff > 0 ? 1 : -1;
+            // 0.1 katsayıyı, maxSpeed*0.6 hız sınırını deneyerek ayarlayabilirsiniz
+            this.y += direction * Math.min(Math.abs(diff) * 0.1, this.maxSpeed * 0.6);
+          }
+          // Kenar kontrolü
+          if (this.y < 0) this.y = 0;
+          if (this.y > canvasHeight - this.height)
+            this.y = canvasHeight - this.height;
+        }
+
+        draw(ctx) {
+          ctx.fillStyle = "white";
+          ctx.fillRect(this.x, this.y, this.width, this.height);
+        }
+      }
+
+      // Rastgele Y konumu
+      function getRandomY(radius) {
+        return radius + Math.random() * (canvasHeight - 2 * radius);
+      }
+
+      // Oyundaki temel ayarlar
+      const paddleWidth = 25;
+      const paddleHeight = 120;
+
+      const leftPaddle = new Paddle(
+        5,
+        canvasHeight / 3,
+        paddleWidth,
+        paddleHeight,
+        false
+      );
+      const rightPaddle = new Paddle(
+        canvasWidth - paddleWidth - 5,
+        canvasHeight / 3,
+        paddleWidth,
+        paddleHeight,
+        true
+      );
+
+      let ball = new Ball(canvasWidth/2, getRandomY(15), 15, 8, 5);
+
+      // Tuş durumları (oyuncu kontrolü)
+      let upPressed = false;
+      let downPressed = false;
+
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "w" || e.key === "W") {
+          upPressed = true;
+        } else if (e.key === "s" || e.key === "S") {
+          downPressed = true;
+        }
+        // Pause/resume
+        if (e.key === "Escape") {
+          if (gameState === "PLAYING") {
+            gameState = "PAUSE";
+            pauseOverlay.style.display = "flex";
+          }
+        }
+      });
+
+      document.addEventListener("keyup", (e) => {
+        if (e.key === "w" || e.key === "W") {
+          upPressed = false;
+        } else if (e.key === "s" || e.key === "S") {
+          downPressed = false;
+        }
+      });
+
+      startBtn.addEventListener("click", () => {
+        if (audioContext.state === "suspended") {
+          // iOS Safari vb. için user interaction sonrası audioContext'i açmak gerekebilir
+          audioContext.resume();
+        }
+        gameState = "PLAYING";
+        startOverlay.style.display = "none";
+      });
+
+      resumeBtn.addEventListener("click", () => {
+        if (audioContext.state === "suspended") {
+          audioContext.resume();
+        }
+        gameState = "PLAYING";
+        pauseOverlay.style.display = "none";
+      });
+
+      // Skorları üst kısımda göstermek için
+      function drawScores(ctx) {
+        ctx.fillStyle = "white";
+        ctx.font = "bold 30px sans-serif";
+        ctx.textBaseline = "top";
+        const scoreText = `${leftPaddle.score} : ${rightPaddle.score}`;
+        const textWidth = ctx.measureText(scoreText).width;
+        ctx.fillText(scoreText, (canvasWidth - textWidth) / 2, 10);
+      }
+
+      // Orta çizgi (kesikli)
+      function drawCenterLine(ctx) {
+        ctx.strokeStyle = "rgba(255,255,255,0.3)";
+        ctx.setLineDash([10, 10]);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(canvasWidth / 2, 0);
+        ctx.lineTo(canvasWidth / 2, canvasHeight);
+        ctx.stroke();
+        ctx.setLineDash([]); // eski haline getir
+      }
+
+      // Skor sonrası topu resetleme
+      function resetBall() {
+        ball.x = canvasWidth / 2;
+        ball.y = getRandomY(ball.radius);
+        // Top hızını ve yönünü biraz rastgeleleştirebilirsin
+        ball.vX = (Math.random() < 0.5 ? -1 : 1) * 8;
+        ball.vY = (Math.random() < 0.5 ? -1 : 1) * 5;
+      }
+
+      // Oyun döngüsü
+      function gameLoop() {
+        if (gameState === "PLAYING") {
+          // Canvas temizle
+          context.clearRect(0, 0, canvasWidth, canvasHeight);
+
+          // Canvas boyutlarını güncelle
+          canvasWidth = canvas.width;
+          canvasHeight = canvas.height;
+          rightPaddle.x = canvasWidth - paddleWidth - 5;
+
+          // Orta çizgiyi çiz
+          drawCenterLine(context);
+
+          // Topu güncelle
+          ball.update();
+
+          // Üst/alt duvara çarpma
+          if (ball.y - ball.radius < 0) {
+            ball.y = ball.radius;
+            ball.vY *= -1;
+            // Duvar çarpma sesi
+            playBeep(200, 0.05);
+            ball.flashColor("yellow");
+          } else if (ball.y + ball.radius > canvasHeight) {
+            ball.y = canvasHeight - ball.radius;
+            ball.vY *= -1;
+            // Duvar çarpma sesi
+            playBeep(300, 0.05);
+            ball.flashColor("yellow");
+          }
+
+          // Sol/sağ dışına çıkma => skor
+          if (ball.x - ball.radius < 0) {
+            // Sağ paddle skor alır
+            rightPaddle.score += 1;
+            playBeep(600, 0.1);
+            resetBall();
+          } else if (ball.x + ball.radius > canvasWidth) {
+            // Sol paddle skor alır
+            leftPaddle.score += 1;
+            playBeep(600, 0.1);
+            resetBall();
+          }
+
+          // Paddle çarpışması
+          // Sol paddle
+          if (
+            ball.x - ball.radius <= leftPaddle.x + leftPaddle.width &&
+            ball.y >= leftPaddle.y &&
+            ball.y <= leftPaddle.y + leftPaddle.height
+          ) {
+            // Açılı yansıma: topun çarptığı nokta ile paddle merkezi arasındaki fark
+            const paddleCenter = leftPaddle.y + leftPaddle.height / 2;
+            let hitPos = (ball.y - paddleCenter) / (leftPaddle.height / 2); 
+            // Topu sağa doğru yönlendir
+            ball.vX = Math.abs(ball.vX) + 0.5;
+            // Biraz açı ekle
+            ball.vY = 8 * hitPos; 
+            // Ses & renk
+            playBeep(400, 0.05);
+            ball.flashColor("lime");
+          }
+          // Sağ paddle
+          if (
+            ball.x + ball.radius >= rightPaddle.x &&
+            ball.y >= rightPaddle.y &&
+            ball.y <= rightPaddle.y + rightPaddle.height
+          ) {
+            const paddleCenter = rightPaddle.y + rightPaddle.height / 2;
+            let hitPos = (ball.y - paddleCenter) / (rightPaddle.height / 2);
+            // Topu sola doğru yönlendir
+            ball.vX = -Math.abs(ball.vX) - 0.5;
+            ball.vY = 8 * hitPos;
+            playBeep(400, 0.05);
+            ball.flashColor("red");
+          }
+
+          // Oyuncu paddle'ını güncelle
+          leftPaddle.updateMovement(upPressed, downPressed);
+          // NPC paddle'ı güncelle
+          rightPaddle.updateAI(ball);
+
+          // Elemanları çiz
+          ball.draw(context);
+          leftPaddle.draw(context);
+          rightPaddle.draw(context);
+          drawScores(context);
+        }
+
+        requestAnimationFrame(gameLoop);
+      }
+
+      // Oyun döngüsünü başlat
+      gameLoop();
+    });
+  </script>
 </body>
 </html>
